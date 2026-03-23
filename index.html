@@ -2075,6 +2075,7 @@ function openGroupSettings(convId){
   window._renameGrp=async(cid)=>{const n=document.getElementById('grp-new-name')?.value?.trim();if(!n)return toast('Name required','e');try{await PATCH(`/conversations/${cid}/rename`,{name:n});toast('Renamed ✓','s');S.allConvs=await GET('/conversations');renderConvList(S.allConvs);}catch(e){toast(e.message,'e');}};
   window._removeGrpMember=async(cid,uid)=>{try{await DELETE(`/conversations/${cid}/members/${uid}`);toast('Removed','s');S.allConvs=await GET('/conversations');renderConvList(S.allConvs);closeModal();}catch(e){toast(e.message,'e');}};
 }
+
 async function grpAddSearch(q){
   if(q.length<2)return;
   const conv=S.allConvs.find(c=>c.id===S.activeConv);
@@ -2087,19 +2088,27 @@ window._addToGrp=async(convId,uid,el)=>{
   try{await POST(`/conversations/${convId}/members`,{user_id:uid});toast('Member added ✓','s');el.style.opacity='.4';el.style.pointerEvents='none';S.allConvs=await GET('/conversations');}catch(e){toast(e.message,'e');}
 };
 
-/* ── CONV WIDGET ── */
+/* ── CONV WIDGET (right panel) ── */
 async function loadConvWidget(){
   const el=document.getElementById('conv-widget-list');if(!el)return;
-  try{const convs=await GET('/conversations');if(!convs.length){el.innerHTML='<div style="padding:12px 14px;font-size:12px;color:var(--text3)">No messages yet</div>';return;}
+  try{
+    const convs=await GET('/conversations');
+    if(!convs.length){el.innerHTML='<div style="padding:12px 14px;font-size:12px;color:var(--text3)">No messages yet</div>';return;}
     el.innerHTML=convs.slice(0,5).map(c=>{
       const other=c.is_group?{name:c.name}:((c.members||[]).find(m=>m.id!==S.me?.id)||c.members?.[0]||{});
       const lm=c.last_message;
       return`<div class="widget-item" onclick="go('messages:${c.id}')">
         ${c.is_group?`<div class="av av-xs" style="background:linear-gradient(135deg,var(--accent),var(--accent3))">👥</div>`:avHTML(other,'av-xs')}
-        <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;truncate">${esc(other.name||'Chat')}</div><div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lm?esc((lm.content||'').slice(0,30)):''}</div></div>
-        ${c.unread_count>0?`<span style="background:var(--accent);color:#fff;font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 3px">${c.unread_count}</span>`:'<div style="font-size:10px;color:var(--text3)">'+(lm?ago(lm.created_at):'')+'</div>'}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.is_group?c.name:other.name||'Chat')}</div>
+          <div style="font-size:11px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${lm?esc((lm.content||'').slice(0,32)):''}</div>
+        </div>
+        ${c.unread_count>0
+          ?`<span style="background:var(--accent);color:#fff;font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 3px">${c.unread_count}</span>`
+          :`<div style="font-size:10px;color:var(--text3);flex-shrink:0">${lm?ago(lm.created_at):''}</div>`}
       </div>`;
-    }).join('');}catch{}
+    }).join('');
+  }catch{}
 }
 
 /* ═══════════════════════════════════════════
@@ -2107,8 +2116,12 @@ async function loadConvWidget(){
 ═══════════════════════════════════════════ */
 async function renderNotifications(){
   const m=document.getElementById('main');
-  m.innerHTML=`<div class="pg-hd"><h2 class="pg-title">🔔 Notifications</h2><button class="btn btn-g btn-sm" onclick="markAllRead()">Mark all read</button></div>
-  <div class="card-base" id="notif-list">${spin()}</div>`;
+  m.innerHTML=`
+    <div class="pg-hd">
+      <h2 class="pg-title">🔔 Notifications</h2>
+      <button class="btn btn-g btn-sm" onclick="markAllRead()">Mark all read</button>
+    </div>
+    <div class="card-base" id="notif-list">${spin()}</div>`;
   try{
     const d=await GET('/notifications?page=1&limit=50');
     S.notifCount=0;updateNB();
@@ -2118,77 +2131,145 @@ async function renderNotifications(){
     el.innerHTML=notifs.map(n=>notifHTML(n)).join('');
   }catch{}
 }
+
 function notifHTML(n){
-  const icons={like:'❤️',follow:'👤',follow_request:'📬',follow_accepted:'✓',comment:'💬',investor_interest:'💼',team_invite:'👥',project_invite:'🎉',message:'💬',new_post:'📝'};
-  const isInvite=n.type==='project_invite'||n.type==='team_invite';
+  const icons={
+    like:'❤️',follow:'👤',follow_request:'📬',follow_accepted:'✅',
+    comment:'💬',investor_interest:'💼',team_invite:'👥',
+    project_invite:'🎉',message:'💬',new_post:'📝'
+  };
+  const isProjectInvite=n.type==='project_invite'||n.type==='team_invite';
   const isFollowReq=n.type==='follow_request';
   return`<div class="notif n-${n.type}${n.read?'':' unread'}" onclick="handleNotifClick('${n.ref_id||''}','${n.ref_type||''}')">
     <div class="notif-ic">${icons[n.type]||'🔔'}</div>
     <div style="flex:1">
       <div class="notif-msg"><strong>${esc(n.actor?.name||'Someone')}</strong> ${esc(n.message)}</div>
       <div class="notif-time">${ago(n.created_at)}</div>
-      ${isInvite?`<div style="display:flex;gap:6px;margin-top:7px"><button class="btn btn-xs btn-success" onclick="event.stopPropagation();respondInviteNotif('${n.ref_id}','accept',this)">✓ Accept</button><button class="btn btn-xs btn-d" onclick="event.stopPropagation();respondInviteNotif('${n.ref_id}','decline',this)">✗ Decline</button></div>`:''}
-      ${isFollowReq?`<div style="display:flex;gap:6px;margin-top:7px"><button class="btn btn-xs btn-success" onclick="event.stopPropagation();handleFollowReqNotif('${n.actor?.id}','accept',this)">✓ Accept</button><button class="btn btn-xs btn-d" onclick="event.stopPropagation();handleFollowReqNotif('${n.actor?.id}','decline',this)">✗ Decline</button></div>`:''}
+      ${isProjectInvite?`<div style="display:flex;gap:6px;margin-top:7px">
+        <button class="btn btn-xs btn-success" onclick="event.stopPropagation();respondInviteNotif('${n.ref_id}','accept',this)">✓ Accept</button>
+        <button class="btn btn-xs btn-d" onclick="event.stopPropagation();respondInviteNotif('${n.ref_id}','decline',this)">✗ Decline</button>
+      </div>`:''}
+      ${isFollowReq?`<div style="display:flex;gap:6px;margin-top:7px">
+        <button class="btn btn-xs btn-success" onclick="event.stopPropagation();handleFollowReqNotif('${n.actor?.id}','accept',this)">✓ Accept</button>
+        <button class="btn btn-xs btn-d" onclick="event.stopPropagation();handleFollowReqNotif('${n.actor?.id}','decline',this)">✗ Decline</button>
+      </div>`:''}
     </div>
     ${!n.read?'<div class="udot"></div>':''}
   </div>`;
 }
+
 async function respondInviteNotif(memberId,action,btn){
-  try{await POST(`/team-invites/${memberId}/respond`,{action});toast(action==='accept'?'Joined! 🎉':'Declined','s');btn.closest('[style*="display:flex"]')?.remove();}catch(e){toast(e.message,'e');}
+  try{
+    await POST(`/team-invites/${memberId}/respond`,{action});
+    toast(action==='accept'?'Joined! 🎉':'Declined','s');
+    btn.closest('div[style]')?.remove();
+  }catch(e){toast(e.message,'e');}
 }
+
 async function handleFollowReqNotif(requesterId,action,btn){
-  try{await POST(`/me/follow-requests/${requesterId}`,{action});toast(action==='accept'?'Follow accepted ✓':'Declined','s');btn.closest('[style*="display:flex"]')?.remove();}catch(e){toast(e.message,'e');}
+  try{
+    await POST(`/me/follow-requests/${requesterId}`,{action});
+    toast(action==='accept'?'Follow accepted ✓':'Declined','s');
+    btn.closest('div[style]')?.remove();
+  }catch(e){toast(e.message,'e');}
 }
-function handleNotifClick(refId,refType){if(!refId)return;if(refType==='post')go('post:'+refId);else if(refType==='project')go('project:'+refId);else if(refType==='user')go('profile:'+refId);}
-async function markAllRead(){try{await POST('/notifications/read');S.notifCount=0;updateNB();renderNotifications();}catch{}}
+
+function handleNotifClick(refId,refType){
+  if(!refId)return;
+  if(refType==='post')go('post:'+refId);
+  else if(refType==='project')go('project:'+refId);
+  else if(refType==='user')go('profile:'+refId);
+}
+
+async function markAllRead(){
+  try{await POST('/notifications/read');S.notifCount=0;updateNB();renderNotifications();}catch{}
+}
+
 function updateNB(){
   const b=document.getElementById('nb');if(!b)return;
   b.textContent=S.notifCount>9?'9+':S.notifCount;
   b.classList.toggle('hidden',S.notifCount===0);
-  const sbnb=document.getElementById('sb-nb');if(sbnb){sbnb.textContent=S.notifCount;sbnb.classList.toggle('hidden',S.notifCount===0);}
+  const sbnb=document.getElementById('sb-nb');
+  if(sbnb){sbnb.textContent=S.notifCount;sbnb.classList.toggle('hidden',S.notifCount===0);}
 }
+
 async function loadNotifCount(){
   try{const d=await GET('/notifications?page=1&limit=1');S.notifCount=d.unread_count||0;updateNB();}catch{}
 }
 
-/* ── SUGGESTED ── */
+/* ── SUGGESTED PEOPLE (right panel) ── */
 async function loadSuggested(){
   try{
-    const users=await GET('/users?page=1&limit=8');syncFollowStates(users);
+    const users=await GET('/users?page=1&limit=8');
+    syncFollowStates(users);
     const el=document.getElementById('suggested');if(!el)return;
     const list=users.filter(u=>u.id!==S.me?.id).slice(0,5);
     if(!list.length){el.innerHTML='';return;}
     el.innerHTML=list.map(u=>{
       const isFollowing=u.is_following!==undefined?u.is_following:getFollowState(u.id);
-      return`<div class="widget-item">${avHTML(u,'av-sm')}<div class="uc-info"><div style="font-size:12px;font-weight:600;cursor:pointer" onclick="go('profile:${u.id}')">${esc(u.name)}</div><div style="font-size:11px;color:var(--text2)">${esc(u.role||'')}</div></div>
-      <button class="follow-btn${isFollowing?' following':''}" id="sfb-${u.id}" onclick="toggleFollow('${u.id}',this)" style="font-size:11px;padding:4px 9px">${isFollowing?'Following':'Follow'}</button></div>`;
+      const isPending=u.follow_pending;
+      return`<div class="widget-item">
+        ${avHTML(u,'av-sm')}
+        <div class="uc-info">
+          <div style="font-size:12px;font-weight:600;cursor:pointer" onclick="go('profile:${u.id}')">${esc(u.name)}</div>
+          <div style="font-size:11px;color:var(--text2)">${esc(u.role||'')}</div>
+        </div>
+        <button class="follow-btn${isFollowing?' following':isPending?' pending':''}" id="sfb-${u.id}" onclick="toggleFollow('${u.id}',this)" style="font-size:11px;padding:4px 9px">${isFollowing?'Following':isPending?'Requested':'Follow'}</button>
+      </div>`;
     }).join('');
   }catch{}
 }
 
-/* ── GLOBAL SEARCH ── */
+/* ── GLOBAL NAV SEARCH ── */
 let _gsDebounce;
-function onSearch(q){clearTimeout(_gsDebounce);if(q.length>1)_gsDebounce=setTimeout(()=>go('search:'+q),400);}
+function onSearch(q){
+  clearTimeout(_gsDebounce);
+  if(q.length>1)_gsDebounce=setTimeout(()=>go('search:'+q),400);
+}
 
-/* ── MODAL ── */
+/* ── MODAL HELPERS ── */
 function modal(title,body,actions=[]){
   const acts=actions.map(a=>`<button class="btn ${a.cls}" onclick="window['${a.fn}']()">${a.l}</button>`).join('');
-  document.getElementById('modal').innerHTML=`<div class="mo" onclick="if(event.target===this)closeModal()"><div class="mo-box"><div class="mo-hd"><div class="mo-title">${esc(title)}</div><button class="mo-x" onclick="closeModal()">✕</button></div><div class="mo-b">${body}</div>${actions.length?`<div class="mo-f"><button class="btn btn-g" onclick="closeModal()">Cancel</button>${acts}</div>`:''}</div></div>`;
+  document.getElementById('modal').innerHTML=`
+    <div class="mo" onclick="if(event.target===this)closeModal()">
+      <div class="mo-box">
+        <div class="mo-hd">
+          <div class="mo-title">${esc(title)}</div>
+          <button class="mo-x" onclick="closeModal()">✕</button>
+        </div>
+        <div class="mo-b">${body}</div>
+        ${actions.length?`<div class="mo-f"><button class="btn btn-g" onclick="closeModal()">Cancel</button>${acts}</div>`:''}
+      </div>
+    </div>`;
 }
 function closeModal(){document.getElementById('modal').innerHTML='';}
 
 /* ── KEYBOARD SHORTCUTS ── */
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'){closeModal();document.getElementById('task-fs-overlay')?.remove();}
-  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){e.preventDefault();document.getElementById('gsearch')?.focus();}
+  if(e.key==='Escape'){
+    closeModal();
+    document.getElementById('task-fs-overlay')?.remove();
+  }
+  if(e.key==='/'&&!['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)){
+    e.preventDefault();
+    document.getElementById('gsearch')?.focus();
+  }
 });
 
-/* ── INIT ── */
+/* ── APP INIT ── */
 (async()=>{
   if(S.token){
-    try{const u=await GET('/me');await boot(u);}
-    catch{localStorage.removeItem('fl_token');S.token=null;showSection('landing');}
-  }else{showSection('landing');}
+    try{
+      const u=await GET('/me');
+      await boot(u);
+    }catch{
+      localStorage.removeItem('fl_token');
+      S.token=null;
+      showSection('landing');
+    }
+  }else{
+    showSection('landing');
+  }
 })();
 </script>
 </body>
